@@ -28,4 +28,4 @@ Thumbs.db
 .idea/
 
 # Prisma
-prisma/migrations/.dev.db*
+prisma/migrations/.dev.db**.zip
