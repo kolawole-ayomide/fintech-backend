@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Owned by BE1 (placeholder so BE2 can build FK relations) ───
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  virtualAccounts VirtualAccount[]
+}
+
+// ─── Owned by BE2 (you) ───
+model VirtualAccount {
+  id           String   @id @default(uuid())
+  userId       String
+  nuban        String   @unique
+  bankName     String
+  provider     String   // wema | providus | sterling
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model TransferRoute {
+  id              String   @id @default(uuid())
+  routeName       String   // nibss | direct_bank
+  successCount    Int      @default(0)
+  failureCount    Int      @default(0)
+  windowStartedAt DateTime @default(now())
+  isActive        Boolean  @default(true)
+}
+
+model VasTransactionLog {
+  id            String   @id @default(uuid())
+  userId        String
+  category      String   // airtime | data | electricity | cable | betting | remita
+  provider      String   // baxi | coralpay | interswitch
+  amount        Decimal  @db.Decimal(18, 2)
+  status        String   // pending | success | failed
+  reference     String   @unique
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+model TerminalSession {
+  id           String   @id @default(uuid())
+  terminalId   String
+  model        String   // sunmi | telpo | pax
+  lastHeartbeat DateTime @default(now())
+  isOnline     Boolean  @default(true)
+}
