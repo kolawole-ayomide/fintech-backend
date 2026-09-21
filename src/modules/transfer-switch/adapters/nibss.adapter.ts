@@ -9,22 +9,22 @@ import {
 } from '../types/transfer.types';
 
 // Mock in-memory store standing in for NIBSS's real transaction state.
-// Swap this adapter's internals for real HTTP calls once sandbox creds land —
-// the TransferAdapter interface stays the same, so router.service.ts never changes.
-const mockTransactions = new Map<string, TransferStatus>();
+// Each entry tracks status + when it was created, so checkStatus can
+// simulate a transaction settling (or dying) over a few seconds — giving
+// the reversal-engine something real to react to during local dev.
+interface MockTxn {
+  status: TransferStatus;
+  createdAt: number;
+  willSettle: boolean; // decided once, at initiation
+}
+
+const mockTransactions = new Map<string, MockTxn>();
 
 export class NibssAdapter implements TransferAdapter {
   async nameEnquiry(accountNumber: string, bankCode: string): Promise<NameEnquiryResult> {
     logger.debug(`[nibss] name enquiry: ${accountNumber} @ ${bankCode}`);
-
-    // Simulated latency
     await delay(300);
-
-    return {
-      accountNumber,
-      accountName: 'MOCK ACCOUNT HOLDER',
-      bankCode,
-    };
+    return { accountNumber, accountName: 'MOCK ACCOUNT HOLDER', bankCode };
   }
 
   async initiateTransfer(input: InitiateTransferInput): Promise<TransferResult> {
@@ -33,24 +33,42 @@ export class NibssAdapter implements TransferAdapter {
 
     await delay(500);
 
-    // Simulate ~90% success rate so router.service.ts has real variance to work with
-    const success = Math.random() > 0.1;
-    const status: TransferStatus = success ? 'processing' : 'failed';
+    // ~90% of transfers are accepted for processing; the other ~10% fail immediately.
+    const acceptedForProcessing = Math.random() > 0.1;
+    // Of the ones accepted, ~70% will go on to settle within ~40s; the rest
+    // stay stuck in "processing" so you can see the timeout-reversal path too.
+    const willSettle = Math.random() > 0.3;
 
-    mockTransactions.set(providerReference, status);
+    const status: TransferStatus = acceptedForProcessing ? 'processing' : 'failed';
+
+    mockTransactions.set(providerReference, { status, createdAt: Date.now(), willSettle });
 
     return {
       reference: input.idempotencyKey,
       route: 'nibss',
       status,
       providerReference,
-      failureReason: success ? undefined : 'Mock upstream timeout',
+      failureReason: acceptedForProcessing ? undefined : 'Mock upstream timeout',
     };
   }
 
   async checkStatus(providerReference: string): Promise<TransferStatus> {
     await delay(150);
-    return mockTransactions.get(providerReference) ?? 'processing';
+
+    const txn = mockTransactions.get(providerReference);
+    if (!txn) return 'processing';
+
+    // Already resolved — return as-is.
+    if (txn.status !== 'processing') return txn.status;
+
+    const secondsElapsed = (Date.now() - txn.createdAt) / 1000;
+
+    // Simulate settlement ~35-40s after initiation, for transactions marked to settle.
+    if (txn.willSettle && secondsElapsed >= 35) {
+      txn.status = 'settled';
+    }
+
+    return txn.status;
   }
 }
 
