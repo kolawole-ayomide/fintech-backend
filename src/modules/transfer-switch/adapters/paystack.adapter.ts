@@ -20,10 +20,13 @@ const client = axios.create({
   },
 });
 
-// Paystack test mode caps *live* bank-code resolves at 3/day — use bank
-// code '001' (Paystack's dedicated test bank) for all local dev/testing
-// to avoid burning that quota. A 429 from this adapter during testing is
-// usually this quota, not a true rate limit — see handlePaystackError below.
+// Paystack test mode limits *live* bank-code resolves to 3/day (confirmed
+// via their API error). Bank code '001' works for simple lookups
+// (nameEnquiry) but is REJECTED by /transferrecipient — confirmed via
+// direct testing: creating a recipient or initiating a transfer requires
+// a real bank code (e.g. '057' for Zenith) even in test mode. Use '001'
+// freely for nameEnquiry testing; reserve real bank codes (and your 3/day
+// quota) for testing initiateTransfer/full transfer flow.
 
 function mapStatus(paystackStatus: string): TransferStatus {
   switch (paystackStatus) {
