@@ -1,6 +1,7 @@
 import prisma from '@config/database';
 import logger from '@shared/utils/logger';
 import { ledgerService } from '@modules/ledger/services/ledger.service';
+import { scheduleReversalCheck } from '@modules/reversal-engine/queues/reversal.queue';
 import { TerminalHeartbeatInput, TerminalTransactionInput, TerminalTransactionResult } from '../types/tms.types';
 
 export class TmsService {
@@ -22,11 +23,6 @@ export class TmsService {
     });
   }
 
-  /**
-   * Processes a card transaction initiated at the terminal. In a real
-   * ISO 8583 integration, this would be triggered by parsing an 0200
-   * (financial transaction request) message and responding with 0210.
-   */
   async processTransaction(input: TerminalTransactionInput): Promise<TerminalTransactionResult> {
     const terminal = await prisma.terminalSession.findFirst({
       where: { terminalId: input.terminalId },
@@ -37,9 +33,6 @@ export class TmsService {
       return { reference: input.reference, status: 'failed' };
     }
 
-    // Simulate the three real-world outcomes a POS transaction can have:
-    // clean success, biller/network failure, or a dispense error (card
-    // charged but the terminal failed to complete — needs reversal).
     const roll = Math.random();
     let status: TerminalTransactionResult['status'];
 
@@ -49,27 +42,46 @@ export class TmsService {
 
     logger.info(`[tms] transaction ${input.reference} on ${input.terminalId}: ${status}`);
 
+    const providerReference = `TMS-${input.terminalId}-${Date.now()}`;
+
     if (status === 'success') {
       await ledgerService.postJournalEntry({
         reference: input.reference,
         userId: input.agentId,
         amount: input.amount,
         type: 'credit',
-        account: 'customer_balance', // agent's commission sub-wallet
+        account: 'customer_balance',
         description: `POS transaction via ${input.terminalId}`,
       });
     }
 
     if (status === 'dispense_error') {
-      // Card was charged upstream but the terminal didn't complete the
-      // dispense — this needs the same reversal-engine treatment as a
-      // stuck bank transfer. For now we log it distinctly so compliance/
-      // ops can see it; wiring it into reversal-engine's queue is a
-      // natural next step once BE1's card-acquiring flow is finalized.
-      logger.error(`[tms] DISPENSE ERROR on ${input.terminalId} — reference ${input.reference} needs manual/auto reversal`);
+      // Card was charged upstream but the terminal failed to complete the
+      // dispense. Treat this exactly like a stuck bank transfer: debit the
+      // customer now (mirrors what actually happened at the card network
+      // level), then hand it to reversal-engine to poll and auto-reverse
+      // within the same timeout window as everything else.
+      logger.error(`[tms] DISPENSE ERROR on ${input.terminalId} — reference ${input.reference}, scheduling auto-reversal`);
+
+      await ledgerService.postJournalEntry({
+        reference: input.reference,
+        userId: input.agentId,
+        amount: input.amount,
+        type: 'debit',
+        account: 'customer_balance',
+        description: `POS dispense error hold — ${input.terminalId}`,
+      });
+
+      await scheduleReversalCheck({
+        reference: input.reference,
+        providerReference,
+        route: 'nibss', // TMS transactions route through the same reversal check; adjust if BE1/PRD define a distinct TMS route type
+        userId: input.agentId,
+        amount: input.amount,
+      });
     }
 
-    return { reference: input.reference, status, providerReference: `TMS-${input.terminalId}-${Date.now()}` };
+    return { reference: input.reference, status, providerReference };
   }
 
   async listOnlineTerminals() {
