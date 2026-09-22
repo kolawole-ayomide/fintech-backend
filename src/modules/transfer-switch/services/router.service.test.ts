@@ -17,12 +17,12 @@ import prisma from '@config/database';
 describe('RouterService.selectRoute', () => {
   const routerService = new RouterService();
 
-  it('defaults to nibss when no route data exists yet', async () => {
+  it('defaults to paystack when no route data exists yet', async () => {
     (prisma.transferRoute.findMany as jest.Mock).mockResolvedValue([]);
 
     const route = await routerService.selectRoute();
 
-    expect(route).toBe('nibss');
+    expect(route).toBe('paystack');
   });
 
   it('prefers the route with the highest success rate', async () => {

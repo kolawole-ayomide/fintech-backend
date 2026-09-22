@@ -13,6 +13,7 @@ export class VasService {
 
   async purchase(input: VasPurchaseInput): Promise<VasPurchaseResult> {
     await idempotencyService.acquireLock(input.reference);
+    let debitPosted = false;
 
     try {
       // Debit the customer first — same debit-then-settle pattern as transfer-switch
@@ -24,6 +25,7 @@ export class VasService {
         account: 'customer_balance',
         description: `${input.category} purchase (${input.identifier})`,
       });
+      debitPosted = true;
 
       const result = await failoverService.purchaseWithFailover(input);
 
@@ -59,6 +61,20 @@ export class VasService {
       await idempotencyService.markCompleted(input.reference, result.reference);
       return result;
     } catch (err) {
+      if (debitPosted) {
+        // Debit went through, but every aggregator in the failover chain
+        // failed/timed out (or something else threw) before we got a
+        // definitive status — same fix as transfer-switch: refund immediately
+        // rather than leaving the customer's debit stranded.
+        await ledgerService.postJournalEntry({
+          reference: `${input.reference}-refund`,
+          userId: input.userId,
+          amount: input.amount,
+          type: 'credit',
+          account: 'customer_balance',
+          description: `Refund: purchase failed entirely — ${(err as Error).message}`,
+        });
+      }
       await idempotencyService.releaseLock(input.reference);
       logger.error(`[vas] purchase failed entirely for ${input.reference}: ${(err as Error).message}`);
       throw err;

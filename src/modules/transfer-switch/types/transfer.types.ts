@@ -1,4 +1,4 @@
-export type TransferRouteName = 'nibss' | 'direct_bank';
+export type TransferRouteName = 'paystack' | 'nibss' | 'direct_bank';
 
 export type TransferStatus =
   | 'initiated'

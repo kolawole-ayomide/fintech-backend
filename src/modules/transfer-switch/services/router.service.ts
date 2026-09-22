@@ -8,7 +8,9 @@ const MIN_SUCCESS_RATE = 0.85; // below this, a route is considered degraded
 export class RouterService {
   /**
    * Picks the best available route based on rolling success rate.
-   * Falls back to 'nibss' if no routing data exists yet (cold start).
+   * Falls back to 'paystack' if no routing data exists yet (cold start) —
+   * this is the only real, credentialed adapter right now; nibss/direct_bank
+   * stay in the type union for when those integrations become available.
    */
   async selectRoute(): Promise<TransferRouteName> {
     const routes = await prisma.transferRoute.findMany({
@@ -16,8 +18,8 @@ export class RouterService {
     });
 
     if (routes.length === 0) {
-      logger.warn('[router] no route data yet — defaulting to nibss');
-      return 'nibss';
+      logger.warn('[router] no route data yet — defaulting to paystack');
+      return 'paystack';
     }
 
     const scored = routes.map((r) => {

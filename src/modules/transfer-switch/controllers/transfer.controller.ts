@@ -7,7 +7,7 @@ const initiateTransferSchema = z.object({
   userId: z.string().uuid(),
   amount: z.number().positive(),
   sourceAccountId: z.string(),
-  destinationBankCode: z.string().length(6),
+  destinationBankCode: z.string().min(3).max(6),
   destinationAccountNumber: z.string().length(10),
   narration: z.string().max(100).optional(),
   idempotencyKey: z.string().uuid(),
@@ -15,7 +15,7 @@ const initiateTransferSchema = z.object({
 
 const nameEnquirySchema = z.object({
   accountNumber: z.string().length(10),
-  bankCode: z.string().length(6),
+  bankCode: z.string().min(3).max(6),
 });
 
 export class TransferController {
