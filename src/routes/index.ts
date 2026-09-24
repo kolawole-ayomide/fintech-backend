@@ -1,4 +1,8 @@
 import { Router } from 'express';
+import transferRoutes from '@modules/transfer-switch/routes/transfer.routes';
+import virtualAccountRoutes from '@modules/virtual-accounts/routes/virtual-account.routes';
+import vasRoutes from '@modules/vas/routes/vas.routes';
+import tmsRoutes from '@modules/tms/routes/tms.routes';
 
 const rootRouter = Router();
 
@@ -11,10 +15,9 @@ rootRouter.get('/health', (_req, res) => {
   });
 });
 
-// BE2 module routers will be mounted here as they're built, e.g.:
-// rootRouter.use('/transfers', transferSwitchRouter);
-// rootRouter.use('/virtual-accounts', virtualAccountsRouter);
-// rootRouter.use('/vas', vasRouter);
-// rootRouter.use('/tms', tmsRouter);
+rootRouter.use('/transfers', transferRoutes);
+rootRouter.use('/virtual-accounts', virtualAccountRoutes);
+rootRouter.use('/vas', vasRoutes);
+rootRouter.use('/tms', tmsRoutes);
 
 export default rootRouter;

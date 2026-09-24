@@ -16,6 +16,8 @@
     "test": "jest --runInBand"
   },
   "dependencies": {
+    "@prisma/client": "^5.19.1",
+    "axios": "^1.20.0",
     "@prisma/client": "^5.22.0",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
