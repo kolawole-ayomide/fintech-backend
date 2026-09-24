@@ -7,24 +7,68 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Owned by BE1 (placeholder so BE2 can build FK relations) ───
+// ─── BE1 Core & Ledger Models ───
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
-
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String   // or passwordHash
+  createdAt   DateTime @default(now())
+  role        Role     @default(CUSTOMER)
+  accounts        Account[]
   virtualAccounts VirtualAccount[]
+  kycProfile      KycProfile?
+  loanApplications LoanApplication[]
 }
 
-// ─── Owned by BE2 (you) ───
+model Account {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  accountType String   // CUSTOMER_WALLET, FLOAT, SETTLEMENT, FEE_RESERVE
+  balance     Decimal  @default(0.00) @db.Decimal(18, 2)
+  currency    String   @default("NGN")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  postings LedgerPosting[]
+
+  @@index([userId])
+}
+
+model LedgerTransaction {
+  id        String   @id @default(uuid())
+  reference String   @unique
+  narration String
+  status    String   @default("COMMITTED") // COMMITTED, REVERSED
+  createdAt DateTime @default(now())
+
+  postings LedgerPosting[]
+}
+
+model LedgerPosting {
+  id            String            @id @default(uuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       Account           @relation(fields: [accountId], references: [id])
+  type          String            // DEBIT or CREDIT
+  amount        Decimal           @db.Decimal(18, 2)
+  createdAt     DateTime          @default(now())
+
+  @@index([transactionId])
+  @@index([accountId])
+}
+
+// ─── BE2 Transfer, Virtual Account & VAS Models ───
 model VirtualAccount {
-  id           String   @id @default(uuid())
-  userId       String
-  nuban        String   @unique
-  bankName     String
-  provider     String   // wema | providus | sterling
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  nuban     String   @unique
+  bankName  String
+  provider  String   // wema | providus | sterling
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
 
@@ -41,22 +85,84 @@ model TransferRoute {
 }
 
 model VasTransactionLog {
-  id            String   @id @default(uuid())
-  userId        String
-  category      String   // airtime | data | electricity | cable | betting | remita
-  provider      String   // baxi | coralpay | interswitch
-  amount        Decimal  @db.Decimal(18, 2)
-  status        String   // pending | success | failed
-  reference     String   @unique
-  createdAt     DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  category  String   // airtime | data | electricity | cable | betting | remita
+  provider  String   // baxi | coralpay | interswitch
+  amount    Decimal  @db.Decimal(18, 2)
+  status    String   // pending | success | failed
+  reference String   @unique
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }
 
 model TerminalSession {
-  id           String   @id @default(uuid())
-  terminalId   String
-  model        String   // sunmi | telpo | pax
+  id            String   @id @default(uuid())
+  terminalId    String
+  model         String   // sunmi | telpo | pax
   lastHeartbeat DateTime @default(now())
-  isOnline     Boolean  @default(true)
+  isOnline      Boolean  @default(true)
+}
+
+model IdempotencyKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  response  Json     // Stores the JSON response body
+  statusCode Int     // Stores the HTTP status code (e.g. 201 or 400)
+  createdAt DateTime @default(now())
+}
+
+model KycProfile {
+  id           String      @id @default(uuid())
+  userId       String      @unique
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier         KycTier     @default(TIER_1)
+  status       KycStatus   @default(PENDING)
+  bvn          String?     // Added back for BVN compliance checks
+  nin          String?     // Added back for NIN compliance checks
+  cacNumber    String?     // Added back for Corporate CAC verification
+  businessName String?
+  verifiedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model LoanApplication {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Decimal     @db.Decimal(18, 2)
+  interestRate  Decimal     @db.Decimal(5, 2) @default(5.00)
+  status        LoanStatus  @default(PENDING) // PENDING, APPROVED, REJECTED, DISBURSED
+  tenureMonths  Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([userId])
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISBURSED
+}
+
+enum KycTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
 }
