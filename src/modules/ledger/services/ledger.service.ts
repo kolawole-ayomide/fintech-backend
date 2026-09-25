@@ -1,6 +1,7 @@
 import { prisma } from '../../../config/prisma';
 import { Decimal } from '@prisma/client/runtime/library';
 import { AppError } from '../../../shared/errors/AppError';
+import { v4 as uuidGen } from 'uuid';
 
 interface PostingInput {
   accountId: string;
@@ -207,3 +208,101 @@ export class LedgerService {
     });
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// BE2 compatibility adapter — bridges the single-sided debit/
+// credit calls used by transfer-switch, reversal-engine, vas,
+// virtual-accounts and tms into real, balanced double-entry
+// postings against LedgerService above. Nothing above this line
+// was changed.
+//
+// Design note: none of the BE2 call sites know their transaction's
+// counterparty account, so each single-sided call posts its stated
+// leg against the named account, and the balancing leg against a
+// system CLEARING account. This keeps every transaction genuinely
+// balanced (debits == credits) without rewriting five modules'
+// call sites. A CLEARING account is a standard accounting pattern
+// for money in transit — safe as a default, worth revisiting once
+// real settlement flows are defined.
+// ─────────────────────────────────────────────────────────────
+
+type LegacyAccountLabel = 'customer_balance' | 'operational_float' | 'settlement_pool' | 'fee_reserve';
+
+const ACCOUNT_TYPE_MAP: Record<LegacyAccountLabel, string> = {
+  customer_balance: 'CUSTOMER_WALLET',
+  operational_float: 'FLOAT',
+  settlement_pool: 'SETTLEMENT',
+  fee_reserve: 'FEE_RESERVE',
+};
+
+async function getOrCreateAccount(userId: string | null, accountType: string) {
+  const isSystemAccount = accountType !== 'CUSTOMER_WALLET';
+  const where = isSystemAccount
+    ? { accountType, userId: null }
+    : { accountType, userId: userId as string };
+
+  const existing = await prisma.account.findFirst({ where });
+  if (existing) return existing;
+
+  return prisma.account.create({
+    data: {
+      userId: isSystemAccount ? null : userId,
+      accountType,
+      currency: 'NGN',
+      balance: 0,
+    },
+  });
+}
+
+export interface PostJournalEntryInput {
+  reference: string;
+  userId: string;
+  amount: number;
+  type: 'debit' | 'credit';
+  account: LegacyAccountLabel;
+  description?: string;
+}
+
+export interface ReverseTransactionInput {
+  originalReference: string;
+  reason: string;
+}
+
+class LedgerServiceAdapter {
+  async postJournalEntry(input: PostJournalEntryInput): Promise<{ entryId: string }> {
+    const mappedType = ACCOUNT_TYPE_MAP[input.account];
+    const isSystemLeg = mappedType !== 'CUSTOMER_WALLET';
+
+    const primaryAccount = await getOrCreateAccount(isSystemLeg ? null : input.userId, mappedType);
+    const clearingAccount = await getOrCreateAccount(null, 'CLEARING');
+
+    const primaryPostingType = input.type === 'debit' ? 'DEBIT' : 'CREDIT';
+    const clearingPostingType = input.type === 'debit' ? 'CREDIT' : 'DEBIT';
+
+    const result = await LedgerService.executeTransaction({
+      reference: input.reference,
+      narration: input.description ?? '',
+      postings: [
+        { accountId: primaryAccount.id, type: primaryPostingType as 'DEBIT' | 'CREDIT', amount: input.amount },
+        { accountId: clearingAccount.id, type: clearingPostingType as 'DEBIT' | 'CREDIT', amount: input.amount },
+      ],
+    });
+
+    return { entryId: result.id };
+  }
+
+  async reverseTransaction(input: ReverseTransactionInput): Promise<{ reversalEntryId: string }> {
+    const newReference = `${input.originalReference}-reversal-${uuidGen()}`;
+    const result = await LedgerService.reverseTransaction(input.originalReference, newReference, input.reason);
+    return { reversalEntryId: result.id };
+  }
+
+  async getBalance(userId: string): Promise<{ available: number; ledger: number }> {
+    const account = await getOrCreateAccount(userId, 'CUSTOMER_WALLET');
+    const balanceInfo = await LedgerService.getAccountBalance(account.id);
+    const balance = Number(balanceInfo.balance);
+    return { available: balance, ledger: balance };
+  }
+}
+
+export const ledgerService = new LedgerServiceAdapter();

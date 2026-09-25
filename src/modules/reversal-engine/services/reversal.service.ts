@@ -61,19 +61,14 @@ export class ReversalService {
   ): Promise<void> {
     logger.warn(`[reversal] reversing ${params.reference}: ${reason}`);
 
+    // reverseTransaction now performs a real, balanced reversal of every
+    // posting on the original transaction (including crediting the
+    // customer back) — the extra manual credit here was a leftover from
+    // when this was a no-op mock, and would double-credit the customer
+    // against a real ledger. Removed.
     await ledgerService.reverseTransaction({
       originalReference: params.reference,
       reason,
-    });
-
-    // Credit the customer back — mirrors the debit made at initiation
-    await ledgerService.postJournalEntry({
-      reference: `${params.reference}-reversal`,
-      userId: params.userId,
-      amount: params.amount,
-      type: 'credit',
-      account: 'customer_balance',
-      description: `Reversal: ${reason}`,
     });
 
     await routerService.recordOutcome(params.route, false);
